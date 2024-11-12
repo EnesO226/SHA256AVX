@@ -815,10 +815,7 @@ void InitK() {
 int main(){
 
 	InitK();
-	printf("Initialized constants...\n");
-	for(int i = 0; i < 1000000; i++){
-			Round();
-	}
+	Round();
 	printf("called round function...compressed result: \n");
 	printf("%8x%8x%8x%8x%8x%8x%8x%8x", aa, bb, cc, dd, ee, ff, gg, hh);
 	system("pause");
