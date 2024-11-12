@@ -1,0 +1,826 @@
+#include <stdio.h>
+#include <stdint.h>
+#include <string.h>
+#include <time.h>
+#include <math.h>
+#include <immintrin.h>
+#include <pthread.h>
+#include <xmmintrin.h>
+#include <cpuid.h>
+
+__m256i K0x428a2f98, K0x71374491, K0xb5c0fbcf, K0xe9b5dba5, K0x3956c25b, K0x59f111f1, K0x923f82a4, K0xab1c5ed5;
+__m256i K0xd807aa98, K0x12835b01, K0x243185be, K0x550c7dc3, K0x72be5d74, K0x80deb1fe, K0x9bdc06a7, K0xc19bf174;
+__m256i K0xe49b69c1, K0xefbe4786, K0x0fc19dc6, K0x240ca1cc, K0x2de92c6f, K0x4a7484aa, K0x5cb0a9dc, K0x76f988da;
+__m256i K0x983e5152, K0xa831c66d, K0xb00327c8, K0xbf597fc7, K0xc6e00bf3, K0xd5a79147, K0x06ca6351, K0x14292967;
+__m256i K0x27b70a85, K0x2e1b2138, K0x4d2c6dfc, K0x53380d13, K0x650a7354, K0x766a0abb, K0x81c2c92e, K0x92722c85;
+__m256i K0xa2bfe8a1, K0xa81a664b, K0xc24b8b70, K0xc76c51a3, K0xd192e819, K0xd6990624, K0xf40e3585, K0x106aa070;
+__m256i K0x19a4c116, K0x1e376c08, K0x2748774c, K0x34b0bcb5, K0x391c0cb3, K0x4ed8aa4a, K0x5b9cca4f, K0x682e6ff3;
+__m256i K0x748f82ee, K0x78a5636f, K0x84c87814, K0x8cc70208, K0x90befffa, K0xa4506ceb, K0xbef9a3f7, K0xc67178f2;
+
+__m256i Ch(__m256i x, __m256i y, __m256i z) {
+    __m256i x_and_y = _mm256_and_si256(x, y);         // (x & y)
+    __m256i not_x = _mm256_andnot_si256(x, _mm256_set1_epi32(-1));  // ~x
+    __m256i not_x_and_z = _mm256_and_si256(not_x, z); // (~x & z)
+    return _mm256_xor_si256(x_and_y, not_x_and_z);    // (x & y) ^ (~x & z)
+}
+
+// SHA-256 Majority function using AVX2
+// Formula: Maj(x, y, z) = (x & y) ^ (x & z) ^ (y & z)
+__m256i Maj(__m256i x, __m256i y, __m256i z);
+__m256i Maj(__m256i x, __m256i y, __m256i z) {
+    __m256i x_and_y = _mm256_and_si256(x, y);         // (x & y)
+    __m256i x_and_z = _mm256_and_si256(x, z);         // (x & z)
+    __m256i y_and_z = _mm256_and_si256(y, z);         // (y & z)
+    return _mm256_xor_si256(_mm256_xor_si256(x_and_y, x_and_z), y_and_z);  // (x & y) ^ (x & z) ^ (y & z)
+}
+
+// Sigma0(x) = ROTR^2(x) ⊕ ROTR^13(x) ⊕ ROTR^22(x)
+__m256i Sigma0(__m256i x) {
+    ;
+}
+
+// Sigma1(x) = ROTR^6(x) ⊕ ROTR^11(x) ⊕ ROTR^25(x)
+__m256i Sigma1(__m256i x) {
+    __m256i rotr6 = _mm256_srli_epi32(x, 6);
+    __m256i rotr11 = _mm256_srli_epi32(x, 11);
+    __m256i rotr25 = _mm256_srli_epi32(x, 25);
+    return _mm256_xor_si256(_mm256_xor_si256(rotr6, rotr11), rotr25);
+}
+
+__m256i M[64];
+
+unsigned int aa, bb, cc, dd, ee, ff, gg, hh;
+
+void Round(){
+	//printf("inside round function...\n");
+	__m256i A = _mm256_set1_epi32(0x6a09e667);
+    __m256i B = _mm256_set1_epi32(0xbb67ae85);
+    __m256i C = _mm256_set1_epi32(0x3c6ef372);
+    __m256i D = _mm256_set1_epi32(0xa54ff53a);
+    __m256i E = _mm256_set1_epi32(0x510e527f);
+    __m256i F = _mm256_set1_epi32(0x9b05688c);
+    __m256i G = _mm256_set1_epi32(0x1f83d9ab);
+    __m256i H = _mm256_set1_epi32(0x5be0cd19);
+
+    __m256i H0 = _mm256_set1_epi32(0x6a09e667);
+    __m256i H1 = _mm256_set1_epi32(0xbb67ae85);
+    __m256i H2 = _mm256_set1_epi32(0x3c6ef372);
+    __m256i H3 = _mm256_set1_epi32(0xa54ff53a);
+    __m256i H4 = _mm256_set1_epi32(0x510e527f);
+    __m256i H5 = _mm256_set1_epi32(0x9b05688c);
+    __m256i H6 = _mm256_set1_epi32(0x1f83d9ab);
+    __m256i H7 = _mm256_set1_epi32(0x5be0cd19);
+
+    ///////////////round 1
+    __m256i majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+    __m256i choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+    __m256i XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	__m256i XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	__m256i sum = _mm256_add_epi32(_mm256_add_epi32(M[0], _mm256_add_epi32(K0x428a2f98, _mm256_add_epi32(H, choose))), XorE);
+	__m256i NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	__m256i NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 2
+	majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+    choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+    XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	sum = _mm256_add_epi32(_mm256_add_epi32(M[1], _mm256_add_epi32(K0x71374491, _mm256_add_epi32(H, choose))), XorE);
+	NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 3
+     majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+     choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+     XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	 XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	 sum = _mm256_add_epi32(_mm256_add_epi32(M[2], _mm256_add_epi32(K0xb5c0fbcf, _mm256_add_epi32(H, choose))), XorE);
+	 NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	 NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 4
+	majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+    choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+    XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	sum = _mm256_add_epi32(_mm256_add_epi32(M[3], _mm256_add_epi32(K0xe9b5dba5, _mm256_add_epi32(H, choose))), XorE);
+	NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 5
+     majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+     choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+     XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	 XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	 sum = _mm256_add_epi32(_mm256_add_epi32(M[4], _mm256_add_epi32(K0x3956c25b, _mm256_add_epi32(H, choose))), XorE);
+	 NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	 NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 6
+	majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+    choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+    XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	sum = _mm256_add_epi32(_mm256_add_epi32(M[5], _mm256_add_epi32(K0x59f111f1, _mm256_add_epi32(H, choose))), XorE);
+	NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 7
+     majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+     choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+     XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	 XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	 sum = _mm256_add_epi32(_mm256_add_epi32(M[6], _mm256_add_epi32(K0x923f82a4, _mm256_add_epi32(H, choose))), XorE);
+	 NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	 NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 8
+	majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+    choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+    XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	sum = _mm256_add_epi32(_mm256_add_epi32(M[7], _mm256_add_epi32(K0xab1c5ed5, _mm256_add_epi32(H, choose))), XorE);
+	NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 9
+     majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+     choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+     XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	 XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	 sum = _mm256_add_epi32(_mm256_add_epi32(M[8], _mm256_add_epi32(K0xd807aa98, _mm256_add_epi32(H, choose))), XorE);
+	 NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	 NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 10
+	majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+    choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+    XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	sum = _mm256_add_epi32(_mm256_add_epi32(M[9], _mm256_add_epi32(K0x12835b01, _mm256_add_epi32(H, choose))), XorE);
+	NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 11
+     majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+     choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+     XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	 XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	 sum = _mm256_add_epi32(_mm256_add_epi32(M[10], _mm256_add_epi32(K0x243185be, _mm256_add_epi32(H, choose))), XorE);
+	 NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	 NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 12
+	majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+    choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+    XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	sum = _mm256_add_epi32(_mm256_add_epi32(M[11], _mm256_add_epi32(K0x550c7dc3, _mm256_add_epi32(H, choose))), XorE);
+	NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 13
+     majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+     choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+     XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	 XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	 sum = _mm256_add_epi32(_mm256_add_epi32(M[12], _mm256_add_epi32(K0x72be5d74, _mm256_add_epi32(H, choose))), XorE);
+	 NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	 NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 14
+	majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+    choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+    XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	sum = _mm256_add_epi32(_mm256_add_epi32(M[13], _mm256_add_epi32(K0x80deb1fe, _mm256_add_epi32(H, choose))), XorE);
+	NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 15
+     majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+     choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+     XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	 XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	 sum = _mm256_add_epi32(_mm256_add_epi32(M[14], _mm256_add_epi32(K0x9bdc06a7, _mm256_add_epi32(H, choose))), XorE);
+	 NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	 NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 16
+	majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+    choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+    XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	sum = _mm256_add_epi32(_mm256_add_epi32(M[15], _mm256_add_epi32(K0xc19bf174, _mm256_add_epi32(H, choose))), XorE);
+	NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 17
+     majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+     choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+     XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	 XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	 sum = _mm256_add_epi32(_mm256_add_epi32(M[16], _mm256_add_epi32(K0xe49b69c1, _mm256_add_epi32(H, choose))), XorE);
+	 NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	 NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 18
+	majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+    choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+    XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	sum = _mm256_add_epi32(_mm256_add_epi32(M[17], _mm256_add_epi32(K0xefbe4786, _mm256_add_epi32(H, choose))), XorE);
+	NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 19
+     majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+     choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+     XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	 XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	 sum = _mm256_add_epi32(_mm256_add_epi32(M[18], _mm256_add_epi32(K0x0fc19dc6, _mm256_add_epi32(H, choose))), XorE);
+	 NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	 NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 20
+	majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+    choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+    XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	sum = _mm256_add_epi32(_mm256_add_epi32(M[19], _mm256_add_epi32(K0x240ca1cc, _mm256_add_epi32(H, choose))), XorE);
+	NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 21
+     majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+     choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+     XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	 XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	 sum = _mm256_add_epi32(_mm256_add_epi32(M[20], _mm256_add_epi32(K0x2de92c6f, _mm256_add_epi32(H, choose))), XorE);
+	 NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	 NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 22
+	majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+    choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+    XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	sum = _mm256_add_epi32(_mm256_add_epi32(M[21], _mm256_add_epi32(K0x4a7484aa, _mm256_add_epi32(H, choose))), XorE);
+	NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 23
+     majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+     choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+     XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	 XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	 sum = _mm256_add_epi32(_mm256_add_epi32(M[22], _mm256_add_epi32(K0x5cb0a9dc, _mm256_add_epi32(H, choose))), XorE);
+	 NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	 NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 24
+	majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+    choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+    XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	sum = _mm256_add_epi32(_mm256_add_epi32(M[23], _mm256_add_epi32(K0x76f988da, _mm256_add_epi32(H, choose))), XorE);
+	NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 25
+     majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+     choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+     XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	 XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	 sum = _mm256_add_epi32(_mm256_add_epi32(M[24], _mm256_add_epi32(K0x983e5152, _mm256_add_epi32(H, choose))), XorE);
+	 NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	 NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 26
+	majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+    choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+    XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	sum = _mm256_add_epi32(_mm256_add_epi32(M[25], _mm256_add_epi32(K0xa831c66d, _mm256_add_epi32(H, choose))), XorE);
+	NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 27
+     majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+     choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+     XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	 XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	 sum = _mm256_add_epi32(_mm256_add_epi32(M[26], _mm256_add_epi32(K0xb00327c8, _mm256_add_epi32(H, choose))), XorE);
+	 NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	 NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 28
+	majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+    choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+    XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	sum = _mm256_add_epi32(_mm256_add_epi32(M[27], _mm256_add_epi32(K0xbf597fc7, _mm256_add_epi32(H, choose))), XorE);
+	NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 29
+     majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+     choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+     XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	 XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	 sum = _mm256_add_epi32(_mm256_add_epi32(M[28], _mm256_add_epi32(K0xc6e00bf3, _mm256_add_epi32(H, choose))), XorE);
+	 NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	 NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 30
+	majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+    choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+    XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	sum = _mm256_add_epi32(_mm256_add_epi32(M[29], _mm256_add_epi32(K0xd5a79147, _mm256_add_epi32(H, choose))), XorE);
+	NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 31
+     majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+     choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+     XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	 XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	 sum = _mm256_add_epi32(_mm256_add_epi32(M[30], _mm256_add_epi32(K0x06ca6351, _mm256_add_epi32(H, choose))), XorE);
+	 NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	 NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 32
+	majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+    choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+    XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	sum = _mm256_add_epi32(_mm256_add_epi32(M[31], _mm256_add_epi32(K0x14292967, _mm256_add_epi32(H, choose))), XorE);
+	NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 33
+     majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+     choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+     XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	 XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	 sum = _mm256_add_epi32(_mm256_add_epi32(M[32], _mm256_add_epi32(K0x27b70a85, _mm256_add_epi32(H, choose))), XorE);
+	 NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	 NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 34
+	majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+    choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+    XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	sum = _mm256_add_epi32(_mm256_add_epi32(M[33], _mm256_add_epi32(K0x2e1b2138, _mm256_add_epi32(H, choose))), XorE);
+	NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 35
+     majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+     choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+     XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	 XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	 sum = _mm256_add_epi32(_mm256_add_epi32(M[34], _mm256_add_epi32(K0x4d2c6dfc, _mm256_add_epi32(H, choose))), XorE);
+	 NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	 NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 36
+	majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+    choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+    XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	sum = _mm256_add_epi32(_mm256_add_epi32(M[35], _mm256_add_epi32(K0x53380d13, _mm256_add_epi32(H, choose))), XorE);
+	NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 37
+     majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+     choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+     XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	 XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	 sum = _mm256_add_epi32(_mm256_add_epi32(M[36], _mm256_add_epi32(K0x650a7354, _mm256_add_epi32(H, choose))), XorE);
+	 NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	 NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 38
+	majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+    choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+    XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	sum = _mm256_add_epi32(_mm256_add_epi32(M[37], _mm256_add_epi32(K0x766a0abb, _mm256_add_epi32(H, choose))), XorE);
+	NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 39
+     majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+     choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+     XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	 XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	 sum = _mm256_add_epi32(_mm256_add_epi32(M[38], _mm256_add_epi32(K0x81c2c92e, _mm256_add_epi32(H, choose))), XorE);
+	 NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	 NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 40
+	majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+    choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+    XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	sum = _mm256_add_epi32(_mm256_add_epi32(M[39], _mm256_add_epi32(K0x92722c85, _mm256_add_epi32(H, choose))), XorE);
+	NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 41
+     majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+     choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+     XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	 XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	 sum = _mm256_add_epi32(_mm256_add_epi32(M[40], _mm256_add_epi32(K0xa2bfe8a1, _mm256_add_epi32(H, choose))), XorE);
+	 NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	 NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 42
+	majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+    choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+    XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	sum = _mm256_add_epi32(_mm256_add_epi32(M[41], _mm256_add_epi32(K0xa81a664b, _mm256_add_epi32(H, choose))), XorE);
+	NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 43
+     majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+     choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+     XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	 XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	 sum = _mm256_add_epi32(_mm256_add_epi32(M[42], _mm256_add_epi32(K0xc24b8b70, _mm256_add_epi32(H, choose))), XorE);
+	 NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	 NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 44
+	majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+    choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+    XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	sum = _mm256_add_epi32(_mm256_add_epi32(M[43], _mm256_add_epi32(K0xc76c51a3, _mm256_add_epi32(H, choose))), XorE);
+	NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 45
+     majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+     choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+     XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	 XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	 sum = _mm256_add_epi32(_mm256_add_epi32(M[44], _mm256_add_epi32(K0xd192e819, _mm256_add_epi32(H, choose))), XorE);
+	 NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	 NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 46
+	majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+    choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+    XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	sum = _mm256_add_epi32(_mm256_add_epi32(M[45], _mm256_add_epi32(K0xd6990624, _mm256_add_epi32(H, choose))), XorE);
+	NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 47
+     majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+     choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+     XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	 XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	 sum = _mm256_add_epi32(_mm256_add_epi32(M[46], _mm256_add_epi32(K0xf40e3585, _mm256_add_epi32(H, choose))), XorE);
+	 NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	 NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 48
+	majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+    choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+    XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	sum = _mm256_add_epi32(_mm256_add_epi32(M[47], _mm256_add_epi32(K0x106aa070, _mm256_add_epi32(H, choose))), XorE);
+	NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 49
+     majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+     choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+     XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	 XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	 sum = _mm256_add_epi32(_mm256_add_epi32(M[48], _mm256_add_epi32(K0x19a4c116, _mm256_add_epi32(H, choose))), XorE);
+	 NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	 NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 50
+	majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+    choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+    XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	sum = _mm256_add_epi32(_mm256_add_epi32(M[49], _mm256_add_epi32(K0x1e376c08, _mm256_add_epi32(H, choose))), XorE);
+	NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 51
+     majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+     choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+     XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	 XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	 sum = _mm256_add_epi32(_mm256_add_epi32(M[50], _mm256_add_epi32(K0x2748774c, _mm256_add_epi32(H, choose))), XorE);
+	 NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	 NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 52
+	majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+    choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+    XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	sum = _mm256_add_epi32(_mm256_add_epi32(M[51], _mm256_add_epi32(K0x34b0bcb5, _mm256_add_epi32(H, choose))), XorE);
+	NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 53
+     majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+     choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+     XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	 XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	 sum = _mm256_add_epi32(_mm256_add_epi32(M[52], _mm256_add_epi32(K0x391c0cb3, _mm256_add_epi32(H, choose))), XorE);
+	 NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	 NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 54
+	majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+    choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+    XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	sum = _mm256_add_epi32(_mm256_add_epi32(M[53], _mm256_add_epi32(K0x4ed8aa4a, _mm256_add_epi32(H, choose))), XorE);
+	NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 55
+     majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+     choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+     XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	 XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	 sum = _mm256_add_epi32(_mm256_add_epi32(M[54], _mm256_add_epi32(K0x5b9cca4f, _mm256_add_epi32(H, choose))), XorE);
+	 NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	 NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 56
+	majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+    choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+    XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	sum = _mm256_add_epi32(_mm256_add_epi32(M[55], _mm256_add_epi32(K0x682e6ff3, _mm256_add_epi32(H, choose))), XorE);
+	NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 57
+     majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+     choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+     XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	 XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	 sum = _mm256_add_epi32(_mm256_add_epi32(M[56], _mm256_add_epi32(K0x748f82ee, _mm256_add_epi32(H, choose))), XorE);
+	 NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	 NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 58
+	majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+    choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+    XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	sum = _mm256_add_epi32(_mm256_add_epi32(M[57], _mm256_add_epi32(K0x78a5636f, _mm256_add_epi32(H, choose))), XorE);
+	NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 59
+     majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+     choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+     XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	 XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	 sum = _mm256_add_epi32(_mm256_add_epi32(M[58], _mm256_add_epi32(K0x84c87814, _mm256_add_epi32(H, choose))), XorE);
+	 NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	 NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 60
+	majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+    choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+    XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	sum = _mm256_add_epi32(_mm256_add_epi32(M[59], _mm256_add_epi32(K0x8cc70208, _mm256_add_epi32(H, choose))), XorE);
+	NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 61
+     majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+     choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+     XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	 XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	 sum = _mm256_add_epi32(_mm256_add_epi32(M[60], _mm256_add_epi32(K0x90befffa, _mm256_add_epi32(H, choose))), XorE);
+	 NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	 NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 62
+	majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+    choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+    XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	sum = _mm256_add_epi32(_mm256_add_epi32(M[61], _mm256_add_epi32(K0xa4506ceb, _mm256_add_epi32(H, choose))), XorE);
+	NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 63
+	majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+    choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+    XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	sum = _mm256_add_epi32(_mm256_add_epi32(M[62], _mm256_add_epi32(K0xbef9a3f7, _mm256_add_epi32(H, choose))), XorE);
+	NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+	///////////////round 64
+	majority = _mm256_xor_si256(_mm256_xor_si256(_mm256_and_si256(A, B), _mm256_and_si256(B, C)), _mm256_and_si256(C, D));
+    choose = _mm256_xor_si256(_mm256_and_si256(E, F), _mm256_and_si256(_mm256_andnot_si256(E, _mm256_set1_epi32(-1)), G));    // (x & y) ^ (~x & z)
+    XorA =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(A, 2), _mm256_srli_epi32(A, 13)), _mm256_srli_epi32(A, 22));
+	XorE =  _mm256_xor_si256(_mm256_xor_si256(_mm256_srli_epi32(E, 6), _mm256_srli_epi32(E, 11)), _mm256_srli_epi32(E, 25));
+	sum = _mm256_add_epi32(_mm256_add_epi32(M[63], _mm256_add_epi32(K0xc67178f2, _mm256_add_epi32(H, choose))), XorE);
+	NewA = _mm256_add_epi32(XorA, _mm256_add_epi32(majority, sum));
+	NewE = _mm256_add_epi32(D, sum);
+
+	H = G; G = F; F = E; E = NewE; D = C; C = B; B = A; A = NewA;
+
+	A = _mm256_add_epi32(A, H0);
+	B = _mm256_add_epi32(B, H1);
+	C = _mm256_add_epi32(C, H2);
+	D = _mm256_add_epi32(D, H3);
+	E = _mm256_add_epi32(E, H4);
+	F = _mm256_add_epi32(F, H5);
+    G = _mm256_add_epi32(G, H6);
+	H = _mm256_add_epi32(H, H7);
+
+	aa = _mm256_extract_epi32(A, 0);
+	bb = _mm256_extract_epi32(B, 0);
+	cc = _mm256_extract_epi32(C, 0);
+	dd = _mm256_extract_epi32(D, 0);
+	ee = _mm256_extract_epi32(E, 0);
+	ff = _mm256_extract_epi32(F, 0);
+	gg = _mm256_extract_epi32(G, 0);
+	hh = _mm256_extract_epi32(H, 0);
+}
+
+
+
+
+
+
+void InitK() {
+    K0x428a2f98 = _mm256_set1_epi32(0x428a2f98);
+    K0x71374491 = _mm256_set1_epi32(0x71374491);
+    K0xb5c0fbcf = _mm256_set1_epi32(0xb5c0fbcf);
+    K0xe9b5dba5 = _mm256_set1_epi32(0xe9b5dba5);
+    K0x3956c25b = _mm256_set1_epi32(0x3956c25b);
+    K0x59f111f1 = _mm256_set1_epi32(0x59f111f1);
+    K0x923f82a4 = _mm256_set1_epi32(0x923f82a4);
+    K0xab1c5ed5 = _mm256_set1_epi32(0xab1c5ed5);
+    
+    K0xd807aa98 = _mm256_set1_epi32(0xd807aa98);
+    K0x12835b01 = _mm256_set1_epi32(0x12835b01);
+    K0x243185be = _mm256_set1_epi32(0x243185be);
+    K0x550c7dc3 = _mm256_set1_epi32(0x550c7dc3);
+    K0x72be5d74 = _mm256_set1_epi32(0x72be5d74);
+    K0x80deb1fe = _mm256_set1_epi32(0x80deb1fe);
+    K0x9bdc06a7 = _mm256_set1_epi32(0x9bdc06a7);
+    K0xc19bf174 = _mm256_set1_epi32(0xc19bf174);
+
+    K0xe49b69c1 = _mm256_set1_epi32(0xe49b69c1);
+    K0xefbe4786 = _mm256_set1_epi32(0xefbe4786);
+    K0x0fc19dc6 = _mm256_set1_epi32(0x0fc19dc6);
+    K0x240ca1cc = _mm256_set1_epi32(0x240ca1cc);
+    K0x2de92c6f = _mm256_set1_epi32(0x2de92c6f);
+    K0x4a7484aa = _mm256_set1_epi32(0x4a7484aa);
+    K0x5cb0a9dc = _mm256_set1_epi32(0x5cb0a9dc);
+    K0x76f988da = _mm256_set1_epi32(0x76f988da);
+
+    K0x983e5152 = _mm256_set1_epi32(0x983e5152);
+    K0xa831c66d = _mm256_set1_epi32(0xa831c66d);
+    K0xb00327c8 = _mm256_set1_epi32(0xb00327c8);
+    K0xbf597fc7 = _mm256_set1_epi32(0xbf597fc7);
+    K0xc6e00bf3 = _mm256_set1_epi32(0xc6e00bf3);
+    K0xd5a79147 = _mm256_set1_epi32(0xd5a79147);
+    K0x06ca6351 = _mm256_set1_epi32(0x06ca6351);
+    K0x14292967 = _mm256_set1_epi32(0x14292967);
+
+    K0x27b70a85 = _mm256_set1_epi32(0x27b70a85);
+    K0x2e1b2138 = _mm256_set1_epi32(0x2e1b2138);
+    K0x4d2c6dfc = _mm256_set1_epi32(0x4d2c6dfc);
+    K0x53380d13 = _mm256_set1_epi32(0x53380d13);
+    K0x650a7354 = _mm256_set1_epi32(0x650a7354);
+    K0x766a0abb = _mm256_set1_epi32(0x766a0abb);
+    K0x81c2c92e = _mm256_set1_epi32(0x81c2c92e);
+    K0x92722c85 = _mm256_set1_epi32(0x92722c85);
+
+    K0xa2bfe8a1 = _mm256_set1_epi32(0xa2bfe8a1);
+    K0xa81a664b = _mm256_set1_epi32(0xa81a664b);
+    K0xc24b8b70 = _mm256_set1_epi32(0xc24b8b70);
+    K0xc76c51a3 = _mm256_set1_epi32(0xc76c51a3);
+    K0xd192e819 = _mm256_set1_epi32(0xd192e819);
+    K0xd6990624 = _mm256_set1_epi32(0xd6990624);
+    K0xf40e3585 = _mm256_set1_epi32(0xf40e3585);
+    K0x106aa070 = _mm256_set1_epi32(0x106aa070);
+
+    K0x19a4c116 = _mm256_set1_epi32(0x19a4c116);
+    K0x1e376c08 = _mm256_set1_epi32(0x1e376c08);
+    K0x2748774c = _mm256_set1_epi32(0x2748774c);
+    K0x34b0bcb5 = _mm256_set1_epi32(0x34b0bcb5);
+    K0x391c0cb3 = _mm256_set1_epi32(0x391c0cb3);
+    K0x4ed8aa4a = _mm256_set1_epi32(0x4ed8aa4a);
+    K0x5b9cca4f = _mm256_set1_epi32(0x5b9cca4f);
+    K0x682e6ff3 = _mm256_set1_epi32(0x682e6ff3);
+
+    K0x748f82ee = _mm256_set1_epi32(0x748f82ee);
+    K0x78a5636f = _mm256_set1_epi32(0x78a5636f);
+    K0x84c87814 = _mm256_set1_epi32(0x84c87814);
+    K0x8cc70208 = _mm256_set1_epi32(0x8cc70208);
+    K0x90befffa = _mm256_set1_epi32(0x90befffa);
+    K0xa4506ceb = _mm256_set1_epi32(0xa4506ceb);
+    K0xbef9a3f7 = _mm256_set1_epi32(0xbef9a3f7);
+    K0xc67178f2 = _mm256_set1_epi32(0xc67178f2);
+}
+
+
+
+int main(){
+
+	InitK();
+	printf("Initialized constants...\n");
+	for(int i = 0; i < 1000000; i++){
+			Round();
+	}
+	printf("called round function...compressed result: \n");
+	printf("%8x%8x%8x%8x%8x%8x%8x%8x", aa, bb, cc, dd, ee, ff, gg, hh);
+	system("pause");
+}
+
